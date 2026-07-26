@@ -118,6 +118,40 @@ lifted the ground a hair off zero showed as a hard-edged bright arc that looked
 like terrain that wasn't there. Any new derivative-based effect needs the same
 flatness guard `clayLine` has.
 
+### Four paint layers, one byte each, packed into one attribute
+
+Weights are per grid point, four bytes to a point, interleaved in the same order
+the shader reads them. That is 1 MB for the whole set; a single layer at full
+float precision would have cost the same. It also means the paint field *is* the
+GPU attribute — no second copy to keep in step — and a paint stroke re-uploads
+only the rows it touched, reusing the machinery heights already had.
+
+The cost is a hard ceiling of four materials. A fifth would be a second packed
+attribute, which is additive rather than a redesign, so the ceiling is worth
+taking. Quantising to 1/255 is invisible: this is a blend weight, not a colour.
+
+Paint sits at the sculpt grid's resolution, so a painted edge can never be
+crisper than 2 world units. For broad zones on a ski mountain — a treeline, a
+frozen basin, an exposed face — that is not the limiting factor. A separate,
+higher-resolution paint texture would decouple the two, at the cost of a second
+coordinate system and its own upload path. Revisit only if a real edge looks
+blocky, not on principle.
+
+### The weights sum to *at most* full, and the slack is the automatic shading
+
+The obvious scheme is weights that always sum to one, with unpainted ground
+sitting at 100% of a base layer. It has a trap. The material already darkens
+steep ground toward rock on its own, and the whole point of a Snow layer is to
+say "keep this face white anyway" — but under sum-to-one, unpainted ground is
+*already* full snow, so painting snow on a cliff would change nothing at all. A
+tool where a stroke visibly does nothing is worse than one without the stroke.
+
+So the four weights sum to at most full and the shortfall is how much automatic
+shading still shows. Unpainted ground is four zeroes and looks exactly as it did
+before paint existed; any stroke, Snow included, takes the surface over. Erasing
+falls out for free — a layer decays toward zero and the total only ever drops,
+so nothing needs renormalising and what was underneath comes back.
+
 ### Undo is per stroke, and sparse
 
 A stroke — press, drag, release — is the unit people expect Ctrl+Z to remove.
@@ -130,6 +164,18 @@ costs only what was actually sculpted.
 262,144 heights as JSON text is a ~6 MB string with a visible parse pause. The
 same data raw is 1 MB and loads instantly. Autosave puts those same bytes in
 browser storage via base64.
+
+Paint doubled the payload to 2 MB, and base64 inflates that to 2.8 million
+characters — past what a browser will hold in localStorage, since the quota is
+counted in bytes and the string is UTF-16. So the autosave is deflated first.
+A fully sculpted and fully painted field lands at about half the budget; a
+typical one is a small fraction of it. The `.clay` file stays uncompressed —
+it has no quota to respect, and a format you can read with a DataView is worth
+more than a smaller one.
+
+The one consequence: reading the autosave is now asynchronous, so it lands a
+frame or two after the first render rather than before it. If a stroke somehow
+got in first, the restore stands down instead of overwriting it.
 
 ### Plain DOM for the UI
 
@@ -159,12 +205,11 @@ free:
 
 This is a director's call, not a technical one.
 
-### 2. How paint layers are stored
+### 2. How paint layers are stored — **settled 2026-07-26**
 
-Per-vertex weights per layer is simple and blends well, but costs one float per
-layer per vertex (1 MB per layer at this grid size) and caps how many layers are
-practical. Alternatives — a hard index plus blend, or a packed weight texture —
-trade flexibility for size. Decide when session 2 starts, not before.
+Four layers, one byte of weight each, packed into a single per-vertex attribute,
+summing to at most full with the automatic slope shading showing through the
+slack. The reasoning is above under *Decisions*.
 
 ### 3. Fixed field size
 

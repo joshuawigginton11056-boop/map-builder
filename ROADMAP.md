@@ -29,11 +29,42 @@ measurable; the cost is all CPU in the brush loop.
   different resolution is refused rather than resampled.
 - No brush for noise/erosion, no stamping, no symmetry.
 
-## 2. Paint layers
+## 2. Paint layers — ✅ landed 2026-07-26
 
-Brush surface materials onto the terrain — snow, rock, grass — blended where
-they meet, held as per-vertex layer weights. The slope-based shading already in
-the clay material is a preview of this; this makes it something you control.
+Brush surface materials onto the terrain, blended where they meet.
+
+- Paint as a fifth tool, with four materials: Snow, Rock, Forest floor, Ice.
+- Shift erases, revealing whatever is under the stroke rather than wiping to
+  bare ground.
+- Ice is slick as well as blue — it takes a specular highlight the other
+  materials don't.
+- Paint strokes undo and redo one at a time, interleaved with sculpt strokes.
+- Saved, loaded and autosaved alongside the shape.
+
+The automatic slope-driven rock stays as the starting point and paint takes over
+where you put it — including painting Snow back onto a face too steep to have
+stayed white on its own.
+
+**Verified:** all four materials paint and blend; overlapping strokes never push
+a point past full coverage (checked across ~9,000 painted cells after five
+overlapping strokes); erase reveals the layer underneath; a paint stroke undoes
+without disturbing the shape and a sculpt stroke undoes without disturbing the
+paint; a `.clay` file and the autosave both round-trip heights and weights
+bit-exactly; a version-1 `.clay` from before paint still opens, unpainted.
+
+**Performance:** a paint frame costs 0.04 ms at the default brush size. The
+worst case — maximum radius over ground that is already painted, so the other
+layers have to give way — is 1.74 ms, against Smooth's 13.7 ms. Pushing the
+changed rows to the GPU and redrawing costs 0.79 ms. Painting leaves the shadow
+map alone, since the shape hasn't moved.
+
+**Known limits, not yet worth fixing:**
+- Four materials is the ceiling for this storage shape. A fifth means a second
+  packed attribute, not a redesign.
+- Paint sits at the sculpt grid's resolution — 2 world units — so a paint edge
+  can't be crisper than the terrain is detailed.
+- No way to paint by rule (everything above 200 units, everything steeper than
+  40°), only by hand.
 
 ## 3. Foliage brush
 

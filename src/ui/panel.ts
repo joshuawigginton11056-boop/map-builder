@@ -7,9 +7,11 @@
 
 import type { BrushSettings, ToolId } from "../sculpt/brush";
 import { MAX_RADIUS, MIN_RADIUS } from "../sculpt/brush";
+import { LAYERS, type LayerId } from "../terrain/layerField";
 
 export interface PanelCallbacks {
   onTool(tool: ToolId): void;
+  onLayer(layer: LayerId): void;
   onBrush(settings: BrushSettings): void;
   onUndo(): void;
   onRedo(): void;
@@ -22,6 +24,7 @@ export interface PanelCallbacks {
 
 export interface Panel {
   setTool(tool: ToolId): void;
+  setLayer(layer: LayerId): void;
   setBrush(settings: BrushSettings): void;
   setHistory(canUndo: boolean, canRedo: boolean): void;
   /** Transient message in the corner (saved, loaded, undo empty…). */
@@ -40,11 +43,13 @@ const TOOLS: readonly ToolSpec[] = [
   { id: "lower", label: "Lower", key: "2", hint: "Dig the ground down" },
   { id: "smooth", label: "Smooth", key: "3", hint: "Soften what's there" },
   { id: "flatten", label: "Flatten", key: "4", hint: "Level to where you clicked" },
+  { id: "paint", label: "Paint", key: "5", hint: "Brush a material onto the surface" },
 ];
 
 export function createPanel(
   root: HTMLElement,
   initialTool: ToolId,
+  initialLayer: LayerId,
   initialBrush: BrushSettings,
   callbacks: PanelCallbacks,
 ): Panel {
@@ -58,7 +63,9 @@ export function createPanel(
   const toolGrid = el("div", "tool-grid");
   for (const tool of TOOLS) {
     const button = document.createElement("button");
-    button.className = "tool";
+    // Paint spans the row: it is the one tool that writes to the surface rather
+    // than the shape, and the layout should say so before the label does.
+    button.className = tool.id === "paint" ? "tool tool-wide" : "tool";
     button.type = "button";
     button.title = tool.hint;
     button.append(el("span", "tool-label", tool.label), el("kbd", "", tool.key));
@@ -67,6 +74,26 @@ export function createPanel(
     toolButtons.set(tool.id, button);
   }
   panel.append(section("Tool", toolGrid));
+
+  // ── Material ─────────────────────────────────────────────────────────────
+  // Only meaningful while Paint is the active tool, so it appears with it
+  // rather than sitting there greyed out taking up the panel.
+  const layerButtons = new Map<LayerId, HTMLButtonElement>();
+  const swatchGrid = el("div", "swatch-grid");
+  for (const layer of LAYERS) {
+    const button = document.createElement("button");
+    button.className = "swatch";
+    button.type = "button";
+    button.title = layer.hint;
+    const chip = el("span", "swatch-chip");
+    chip.style.background = layer.swatch;
+    button.append(chip, el("span", "swatch-label", layer.label));
+    button.addEventListener("click", () => callbacks.onLayer(layer.id));
+    swatchGrid.append(button);
+    layerButtons.set(layer.id, button);
+  }
+  const materialSection = section("Material", swatchGrid);
+  panel.append(materialSection);
 
   // ── Brush ────────────────────────────────────────────────────────────────
   const size = slider("Size", MIN_RADIUS, MAX_RADIUS, 1, brush.radius, (v) => {
@@ -125,7 +152,7 @@ export function createPanel(
     el(
       "p",
       "hints",
-      "Left-drag sculpts · Shift inverts · Right-drag orbits · Middle-drag pans · Scroll zooms · [ ] resize · Ctrl+Z undo",
+      "Left-drag sculpts · Shift inverts (erases when painting) · Right-drag orbits · Middle-drag pans · Scroll zooms · [ ] resize · Ctrl+Z undo",
     ),
   );
 
@@ -140,11 +167,20 @@ export function createPanel(
     for (const [id, btn] of toolButtons) {
       btn.classList.toggle("is-active", id === tool);
     }
+    materialSection.hidden = tool !== "paint";
   }
   setTool(initialTool);
 
+  function setLayer(layer: LayerId): void {
+    for (const [id, btn] of layerButtons) {
+      btn.classList.toggle("is-active", id === layer);
+    }
+  }
+  setLayer(initialLayer);
+
   return {
     setTool,
+    setLayer,
     setBrush(next) {
       brush = next;
       size.set(next.radius);

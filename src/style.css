@@ -153,6 +153,58 @@ kbd {
   color: #ffd9b0;
 }
 
+.tool-wide {
+  grid-column: 1 / -1;
+}
+
+/* ── Material swatches ─────────────────────────────────────────────────── */
+
+.swatch-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.swatch {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: var(--control);
+  color: var(--text-dim);
+  font: inherit;
+  padding: 6px 8px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.swatch:hover {
+  background: var(--control-hover);
+}
+
+.swatch-chip {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+.swatch-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.swatch.is-active {
+  background: rgba(255, 156, 63, 0.18);
+  border-color: rgba(255, 156, 63, 0.55);
+  color: var(--text);
+}
+
 /* ── Sliders ───────────────────────────────────────────────────────────── */
 
 .slider-head {

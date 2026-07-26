@@ -55,11 +55,14 @@ src/
   terrain/heightfield.ts   The clay: a Float32Array of heights + the math to
                            read it (bilinear sampling, ray marching).
                            Knows nothing about rendering.
-  terrain/terrainMesh.ts   The mesh that shows it, plus the clay material
-                           (contours, slope shading, grid).
+  terrain/layerField.ts    The paint: four material weights per grid point,
+                           one byte each, packed the way the shader reads them.
+  terrain/terrainMesh.ts   The mesh that shows both, plus the clay material
+                           (paint blending, contours, slope shading, grid).
   sculpt/brush.ts          What moves the clay. Pure-ish: takes a heightfield
                            and a hit point, returns the rectangle it changed.
-  sculpt/history.ts        Undo/redo, one stroke at a time.
+  sculpt/paint.ts          The same brush shape, writing materials instead.
+  sculpt/history.ts        Undo/redo, one stroke at a time, over either field.
   ui/panel.ts              The tool panel. Plain DOM, owns no state.
   ui/brushCursor.ts        The ring under the mouse, draped over the terrain.
   io/project.ts            .clay file format + browser autosave.
@@ -84,6 +87,12 @@ src/
 - **Derivative-based shader lines need a flatness guard.** `fwidth` collapses
   to zero on flat ground, which makes a "line" cover everything. See
   `clayLine` — this caused a visible bug once already.
+- **Paint weights sum to at most full, not exactly full.** The shortfall is how
+  much automatic slope shading shows through, which is what lets a Snow stroke
+  clear the rock off a cliff. Anything that renormalises them to 1 breaks that.
+- **A stroke writes to the shape or the surface, never both.** `history.begin`
+  takes which, and undo reports it back so only the affected buffer re-uploads.
+  Painting doesn't touch the shadow map — the ground hasn't moved.
 
 ## Verifying changes
 
@@ -94,3 +103,13 @@ Chrome throttles `requestAnimationFrame` to zero in a background tab, so
 synthetic sculpt strokes will silently do nothing. Drive `window.mapBuilder.step(1/60)`
 directly instead — the dev-only handle on `window` exists for exactly this, and
 gives reproducible results regardless of how the tab is scheduled.
+
+Two more traps when driving it by script:
+
+- **The canvas can start at 0 × 0** if the page loads into a pane with no
+  layout, and every pointer position then computes to NaN, so nothing is ever
+  hit. Dispatch a `resize` event first and check the canvas has a size.
+- **Don't eyeball a screenshot to decide whether a colour landed.** Project the
+  world position through the camera and `gl.readPixels` that exact pixel. Half
+  an hour went into "the paint isn't rendering on slopes" that was really a
+  guessed screen coordinate landing on the wrong part of the mountain.

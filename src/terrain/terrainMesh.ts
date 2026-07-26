@@ -8,6 +8,7 @@
 import * as THREE from "three";
 import type { GridRect, Heightfield } from "./heightfield";
 import { heightAtGrid, worldXOf, worldZOf } from "./heightfield";
+import { LAYER_COUNT, type LayerField } from "./layerField";
 
 export interface TerrainMesh {
   readonly object: THREE.Mesh;
@@ -15,13 +16,15 @@ export interface TerrainMesh {
   readonly material: THREE.MeshStandardMaterial;
   /** Push a changed rectangle of heights to the GPU. */
   update(dirty: GridRect): void;
-  /** Push the whole field (after a load, or a New). */
+  /** Push a changed rectangle of layer weights to the GPU. */
+  updatePaint(dirty: GridRect): void;
+  /** Push the whole field, shape and surface (after a load, or a New). */
   updateAll(): void;
   setGridVisible(visible: boolean): void;
   dispose(): void;
 }
 
-export function createTerrainMesh(hf: Heightfield): TerrainMesh {
+export function createTerrainMesh(hf: Heightfield, layers: LayerField): TerrainMesh {
   const { size } = hf;
   const vertexCount = size * size;
 
@@ -60,10 +63,17 @@ export function createTerrainMesh(hf: Heightfield): TerrainMesh {
   const geometry = new THREE.BufferGeometry();
   const positionAttr = new THREE.BufferAttribute(positions, 3);
   const normalAttr = new THREE.BufferAttribute(normals, 3);
+  // The paint field is already laid out four bytes per grid point in the order
+  // the shader wants, so the attribute reads it in place — no copy, no second
+  // representation to keep in step. `normalized` turns 0–255 into 0–1 on the
+  // GPU for free.
+  const layerAttr = new THREE.BufferAttribute(layers.weights, LAYER_COUNT, true);
   positionAttr.setUsage(THREE.DynamicDrawUsage);
   normalAttr.setUsage(THREE.DynamicDrawUsage);
+  layerAttr.setUsage(THREE.DynamicDrawUsage);
   geometry.setAttribute("position", positionAttr);
   geometry.setAttribute("normal", normalAttr);
+  geometry.setAttribute("aLayer", layerAttr);
   geometry.setIndex(new THREE.BufferAttribute(indices, 1));
   geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), hf.extent);
 
@@ -121,6 +131,17 @@ export function createTerrainMesh(hf: Heightfield): TerrainMesh {
     normalAttr.needsUpdate = true;
   }
 
+  function writePaintRect(rect: GridRect): void {
+    // Unlike heights, a painted weight affects nothing but its own vertex, so
+    // there is no neighbour ring to widen by. The rows still upload as one
+    // contiguous span.
+    const start = rect.minZ * size * LAYER_COUNT;
+    const count = (rect.maxZ - rect.minZ + 1) * size * LAYER_COUNT;
+    layerAttr.clearUpdateRanges();
+    layerAttr.addUpdateRange(start, count);
+    layerAttr.needsUpdate = true;
+  }
+
   const fullRect: GridRect = { minX: 0, minZ: 0, maxX: size - 1, maxZ: size - 1 };
 
   return {
@@ -128,7 +149,11 @@ export function createTerrainMesh(hf: Heightfield): TerrainMesh {
     geometry,
     material,
     update: writeRect,
-    updateAll: () => writeRect(fullRect),
+    updatePaint: writePaintRect,
+    updateAll: () => {
+      writeRect(fullRect);
+      writePaintRect(fullRect);
+    },
     setGridVisible: (visible) => {
       gridUniform.value = visible ? 1 : 0;
     },
@@ -145,14 +170,20 @@ interface ClayUniforms {
 }
 
 /**
- * Snow that you can actually read the shape of.
+ * Snow that you can actually read the shape of, plus whatever you have painted
+ * onto it.
  *
  * A plain white lambert surface is nearly impossible to sculpt against — soft
  * light on white gives you almost no gradient, so a ridge and a bowl look the
  * same. So the material adds three cues on top of the lighting: steep faces
  * darken toward rock, elevation contour lines band the surface every 10 units,
- * and a faint world grid every 64 units gives scale. It doubles as a preview of
- * the slope-based blending the paint-layer pass will do for real.
+ * and a faint world grid every 64 units gives scale.
+ *
+ * The slope-driven rock is the *starting point*, not the answer. The four paint
+ * weights sum to at most one, and the shortfall is how much of that automatic
+ * shading still shows through — so unpainted ground looks exactly as it did
+ * before paint existed, and a stroke of any material (Snow included) takes the
+ * surface over wherever it lands.
  */
 function createClayMaterial(): THREE.MeshStandardMaterial {
   const uniforms: ClayUniforms = {
@@ -175,14 +206,17 @@ function createClayMaterial(): THREE.MeshStandardMaterial {
       .replace(
         "#include <common>",
         `#include <common>
+         attribute vec4 aLayer;
          varying vec3 vClayWorld;
-         varying vec3 vClayNormal;`,
+         varying vec3 vClayNormal;
+         varying vec4 vClayLayer;`,
       )
       .replace(
         "#include <worldpos_vertex>",
         `#include <worldpos_vertex>
          vClayWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;
-         vClayNormal = normalize(mat3(modelMatrix) * objectNormal);`,
+         vClayNormal = normalize(mat3(modelMatrix) * objectNormal);
+         vClayLayer = aLayer;`,
       );
 
     shader.fragmentShader = shader.fragmentShader
@@ -193,6 +227,16 @@ function createClayMaterial(): THREE.MeshStandardMaterial {
          uniform float uContourSpacing;
          varying vec3 vClayWorld;
          varying vec3 vClayNormal;
+         varying vec4 vClayLayer;
+
+         // The palette. Snow stays believable rather than stylised — the game's
+         // art direction wants relief and sparkle in the snow, not painted
+         // detail — so it is a near-white with a cold cast, and the character
+         // comes from the lighting and the contours instead of from the colour.
+         const vec3 CLAY_SNOW   = vec3(0.93, 0.95, 0.98);
+         const vec3 CLAY_ROCK   = vec3(0.44, 0.45, 0.50);
+         const vec3 CLAY_FOREST = vec3(0.20, 0.26, 0.17);
+         const vec3 CLAY_ICE    = vec3(0.55, 0.71, 0.83);
 
          // One anti-aliased line wherever \`value\` crosses a multiple of
          // \`period\`. Width is derived from the on-screen derivative so the
@@ -219,15 +263,26 @@ function createClayMaterial(): THREE.MeshStandardMaterial {
         "#include <color_fragment>",
         `#include <color_fragment>
          {
-           // Steep ground reads as exposed rock; flat ground stays snow. The
-           // thresholds put anything under ~30° in snow, ~45° half rock and
-           // ~60° fully rock — steep enough to be believable, shallow enough
-           // that the shading actually tells you where the pitches are.
+           // Where nothing has been painted, steep ground reads as exposed rock
+           // and flat ground stays snow. The thresholds put anything under ~30°
+           // in snow, ~45° half rock and ~60° fully rock — steep enough to be
+           // believable, shallow enough that the shading actually tells you
+           // where the pitches are.
            float slope = 1.0 - clamp(vClayNormal.y, 0.0, 1.0);
            float rock = smoothstep(0.14, 0.48, slope);
-           vec3 snowColor = vec3(0.93, 0.95, 0.98);
-           vec3 rockColor = vec3(0.44, 0.45, 0.50);
-           diffuseColor.rgb *= mix(snowColor, rockColor, rock);
+           vec3 autoColor = mix(CLAY_SNOW, CLAY_ROCK, rock);
+
+           // Paint on top. \`painted\` is how much of the surface the four layers
+           // have claimed between them; the rest is still the automatic
+           // shading above. A weighted sum rather than a chain of mixes, so no
+           // layer wins by being drawn last.
+           float painted = clamp(dot(vClayLayer, vec4(1.0)), 0.0, 1.0);
+           vec3 surface = autoColor * (1.0 - painted)
+                        + CLAY_SNOW   * vClayLayer.r
+                        + CLAY_ROCK   * vClayLayer.g
+                        + CLAY_FOREST * vClayLayer.b
+                        + CLAY_ICE    * vClayLayer.a;
+           diffuseColor.rgb *= surface;
 
            // Contour bands: the single biggest readability win on white.
            float contour = clayLine(vClayWorld.y, uContourSpacing, 1.0);
@@ -244,6 +299,15 @@ function createClayMaterial(): THREE.MeshStandardMaterial {
                                     g * fade * 0.8);
            }
          }`,
+      )
+      .replace(
+        "#include <roughnessmap_fragment>",
+        `#include <roughnessmap_fragment>
+         // Ice is the one layer that has to differ in more than colour: a blue
+         // patch at snow's roughness still reads as snow that happens to be
+         // blue. Dropping the roughness gives it a specular highlight, which is
+         // what actually says "this is slick".
+         roughnessFactor = mix(roughnessFactor, 0.18, vClayLayer.a);`,
       );
   };
 

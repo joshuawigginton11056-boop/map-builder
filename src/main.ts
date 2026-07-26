@@ -16,7 +16,17 @@ import {
   type RayHit,
 } from "./terrain/heightfield";
 import { createTerrainMesh } from "./terrain/terrainMesh";
-import { applyBrush, DEFAULT_BRUSH, MAX_RADIUS, MIN_RADIUS, type BrushSettings, type ToolId } from "./sculpt/brush";
+import { createLayerField, layerIndexOf, type LayerId } from "./terrain/layerField";
+import {
+  applyBrush,
+  DEFAULT_BRUSH,
+  MAX_RADIUS,
+  MIN_RADIUS,
+  type BrushSettings,
+  type SculptToolId,
+  type ToolId,
+} from "./sculpt/brush";
+import { applyPaint } from "./sculpt/paint";
 import { createHistory } from "./sculpt/history";
 import { createBrushCursor } from "./ui/brushCursor";
 import { createPanel } from "./ui/panel";
@@ -90,29 +100,34 @@ controls.maxPolarAngle = Math.PI * 0.495;
 // ── World ───────────────────────────────────────────────────────────────────
 
 const heightfield = createHeightfield(GRID_SIZE, WORLD_EXTENT);
-const terrain = createTerrainMesh(heightfield);
+const layers = createLayerField(GRID_SIZE);
+const terrain = createTerrainMesh(heightfield, layers);
 terrain.object.castShadow = true;
 scene.add(terrain.object);
 
-const history = createHistory(heightfield);
+const history = createHistory(heightfield, layers);
 const cursor = createBrushCursor();
 scene.add(cursor.object);
 
 // ── Editor state ────────────────────────────────────────────────────────────
 
 let tool: ToolId = "raise";
+let layer: LayerId = "snow";
 let brush: BrushSettings = DEFAULT_BRUSH;
 let sculpting = false;
 let invert = false;
 let flattenTarget = 0;
 let hit: RayHit | null = null;
 let pointerInside = false;
+/** Set the moment a stroke starts, so a late autosave restore can't clobber it. */
+let edited = false;
 
 const pointerNdc = new THREE.Vector2();
 const raycaster = new THREE.Raycaster();
 
-const panel = createPanel(ui, tool, brush, {
+const panel = createPanel(ui, tool, layer, brush, {
   onTool: setTool,
+  onLayer: setLayer,
   onBrush: (next) => {
     brush = next;
   },
@@ -120,7 +135,7 @@ const panel = createPanel(ui, tool, brush, {
   onRedo: doRedo,
   onNew: doNew,
   onSave: () => {
-    downloadProject(heightfield, "sculpt.clay");
+    downloadProject(heightfield, layers, "sculpt.clay");
     panel.toast("Saved sculpt.clay");
   },
   onLoad: doLoad,
@@ -133,13 +148,21 @@ function setTool(next: ToolId): void {
   panel.setTool(next);
 }
 
-function activeTool(): ToolId {
+function setLayer(next: LayerId): void {
+  layer = next;
+  panel.setLayer(next);
+  // Picking a material is only ever a prelude to painting with it.
+  if (tool !== "paint") setTool("paint");
+}
+
+function activeSculptTool(): SculptToolId {
   // Shift flips the digging direction, the way every sculpting tool does.
   // Smooth and Flatten have no opposite, so they ignore it.
-  if (!invert) return tool;
-  if (tool === "raise") return "lower";
-  if (tool === "lower") return "raise";
-  return tool;
+  const current = tool === "paint" ? "raise" : tool;
+  if (!invert) return current;
+  if (current === "raise") return "lower";
+  if (current === "lower") return "raise";
+  return current;
 }
 
 function refreshHistoryButtons(): void {
@@ -179,8 +202,9 @@ renderer.domElement.addEventListener("pointerdown", (event) => {
   // Flatten levels to wherever you first pressed, so you pick the height by
   // clicking it rather than typing a number.
   flattenTarget = heightAtWorld(heightfield, hit.x, hit.z);
-  history.begin();
+  history.begin(tool === "paint" ? "paint" : "height");
   sculpting = true;
+  edited = true;
 });
 
 renderer.domElement.addEventListener("pointermove", updatePointer);
@@ -216,6 +240,7 @@ const TOOL_KEYS: Readonly<Record<string, ToolId>> = {
   "2": "lower",
   "3": "smooth",
   "4": "flatten",
+  "5": "paint",
 };
 
 window.addEventListener("keydown", (event) => {
@@ -264,13 +289,17 @@ window.addEventListener("keyup", (event) => {
 // ── Commands ────────────────────────────────────────────────────────────────
 
 function applyHistoryStep(step: "undo" | "redo"): void {
-  const rect = step === "undo" ? history.undo() : history.redo();
-  if (!rect) {
+  const change = step === "undo" ? history.undo() : history.redo();
+  if (!change) {
     panel.toast(step === "undo" ? "Nothing to undo" : "Nothing to redo");
     return;
   }
-  terrain.update(rect);
-  renderer.shadowMap.needsUpdate = true;
+  if (change.target === "paint") {
+    terrain.updatePaint(change.rect);
+  } else {
+    terrain.update(change.rect);
+    renderer.shadowMap.needsUpdate = true;
+  }
   refreshHistoryButtons();
   scheduleAutosave();
 }
@@ -288,6 +317,7 @@ function doNew(): void {
     return;
   }
   heightfield.heights.fill(0);
+  layers.weights.fill(0);
   recomputeCeiling(heightfield);
   terrain.updateAll();
   renderer.shadowMap.needsUpdate = true;
@@ -306,11 +336,13 @@ function doLoad(file: File): void {
         );
       }
       heightfield.heights.set(project.heights);
+      layers.weights.set(project.weights);
       recomputeCeiling(heightfield);
       terrain.updateAll();
       renderer.shadowMap.needsUpdate = true;
       history.clear();
       refreshHistoryButtons();
+      edited = true;
       scheduleAutosave();
       panel.toast(`Loaded ${file.name}`);
     })
@@ -326,26 +358,36 @@ function frameAll(): void {
 }
 
 // Autosave is debounced rather than immediate: a flurry of short strokes
-// shouldn't each pay for a megabyte of base64.
+// shouldn't each pay for compressing two megabytes.
 let autosaveTimer = 0;
 function scheduleAutosave(): void {
   window.clearTimeout(autosaveTimer);
   autosaveTimer = window.setTimeout(() => {
-    if (!autosave(heightfield)) panel.toast("Autosave failed — browser storage is full.");
+    void autosave(heightfield, layers).then((ok) => {
+      if (!ok) panel.toast("Autosave failed — browser storage is full.");
+    });
   }, 1500);
 }
 
 // ── Boot ────────────────────────────────────────────────────────────────────
 
-const restored = loadAutosave();
-if (restored && restored.size === GRID_SIZE) {
-  heightfield.heights.set(restored.heights);
-  panel.toast("Restored your last sculpt");
-}
 recomputeCeiling(heightfield);
 terrain.updateAll();
 renderer.shadowMap.needsUpdate = true;
 refreshHistoryButtons();
+
+// Reading the autosave has to decompress, so it lands a frame or two after the
+// first render rather than before it. If a stroke got in first — an eager click
+// on a fresh field — the restore stands down rather than overwriting it.
+void loadAutosave().then((restored) => {
+  if (!restored || restored.size !== GRID_SIZE || edited) return;
+  heightfield.heights.set(restored.heights);
+  layers.weights.set(restored.weights);
+  recomputeCeiling(heightfield);
+  terrain.updateAll();
+  renderer.shadowMap.needsUpdate = true;
+  panel.toast("Restored your last sculpt");
+});
 
 function resize(): void {
   const width = app.clientWidth;
@@ -375,18 +417,34 @@ function step(dt: number): void {
   }
 
   if (sculpting && hit) {
-    const rect = applyBrush(
-      heightfield,
-      history,
-      activeTool(),
-      hit,
-      brush,
-      dt,
-      flattenTarget,
-    );
-    if (rect) {
-      terrain.update(rect);
-      renderer.shadowMap.needsUpdate = true;
+    if (tool === "paint") {
+      // Painting changes the surface, not the shape, so the shadow map is
+      // still valid — no re-render of it, and no normals to recompute.
+      const rect = applyPaint(
+        heightfield,
+        layers,
+        history,
+        layerIndexOf(layer),
+        hit,
+        brush,
+        dt,
+        invert,
+      );
+      if (rect) terrain.updatePaint(rect);
+    } else {
+      const rect = applyBrush(
+        heightfield,
+        history,
+        activeSculptTool(),
+        hit,
+        brush,
+        dt,
+        flattenTarget,
+      );
+      if (rect) {
+        terrain.update(rect);
+        renderer.shadowMap.needsUpdate = true;
+      }
     }
   }
 
@@ -414,6 +472,18 @@ renderer.setAnimationLoop(() => {
 // so nothing leaks into a production bundle.
 if (import.meta.env.DEV) {
   Object.assign(window, {
-    mapBuilder: { heightfield, terrain, scene, camera, controls, history, renderer, step },
+    mapBuilder: {
+      heightfield,
+      layers,
+      terrain,
+      scene,
+      camera,
+      controls,
+      history,
+      renderer,
+      step,
+      setTool,
+      setLayer,
+    },
   });
 }

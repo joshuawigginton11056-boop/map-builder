@@ -9,7 +9,10 @@ import type { GridRect, Heightfield } from "../terrain/heightfield";
 import { gridXOf, gridZOf, heightAtGrid, worldXOf, worldZOf } from "../terrain/heightfield";
 import type { History } from "./history";
 
-export type ToolId = "raise" | "lower" | "smooth" | "flatten";
+/** The tools that move the clay. Paint is a tool too, but it writes elsewhere. */
+export type SculptToolId = "raise" | "lower" | "smooth" | "flatten";
+
+export type ToolId = SculptToolId | "paint";
 
 export interface BrushSettings {
   /** Brush radius in world units. */
@@ -67,7 +70,7 @@ export interface BrushHit {
 export function applyBrush(
   hf: Heightfield,
   history: History,
-  tool: ToolId,
+  tool: SculptToolId,
   hit: BrushHit,
   settings: BrushSettings,
   dt: number,
