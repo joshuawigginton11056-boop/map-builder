@@ -1,0 +1,238 @@
+:root {
+  --bg: #141a24;
+  --panel: rgba(20, 26, 36, 0.88);
+  --panel-line: rgba(255, 255, 255, 0.1);
+  --text: #e7ecf4;
+  --text-dim: #96a1b4;
+  --accent: #ff9c3f;
+  --control: rgba(255, 255, 255, 0.07);
+  --control-hover: rgba(255, 255, 255, 0.13);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.45 "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+canvas {
+  display: block;
+  /* The viewport is the tool — never let a drag select page text or bounce
+     the page while sculpting. */
+  touch-action: none;
+  cursor: crosshair;
+}
+
+#ui {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* ── Panel ─────────────────────────────────────────────────────────────── */
+
+.panel {
+  pointer-events: auto;
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  width: 232px;
+  padding: 14px;
+  border: 1px solid var(--panel-line);
+  border-radius: 12px;
+  background: var(--panel);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  user-select: none;
+}
+
+.panel-title {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.group {
+  margin: 0 0 14px;
+}
+
+.group-title {
+  margin: 0 0 7px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.row {
+  display: flex;
+  gap: 6px;
+}
+
+.row > * {
+  flex: 1;
+}
+
+/* ── Buttons ───────────────────────────────────────────────────────────── */
+
+.btn,
+.tool {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: var(--control);
+  color: var(--text);
+  font: inherit;
+  padding: 7px 9px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.btn:hover:not(:disabled),
+.tool:hover {
+  background: var(--control-hover);
+}
+
+.btn:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.tool-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.tool {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  text-align: left;
+}
+
+.tool.is-active {
+  background: rgba(255, 156, 63, 0.18);
+  border-color: rgba(255, 156, 63, 0.55);
+  color: #ffd9b0;
+}
+
+kbd {
+  font: 10px/1 ui-monospace, "Cascadia Mono", monospace;
+  padding: 3px 4px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--text-dim);
+}
+
+.tool.is-active kbd {
+  color: #ffd9b0;
+}
+
+/* ── Sliders ───────────────────────────────────────────────────────────── */
+
+.slider-head {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 3px;
+}
+
+.slider-label {
+  color: var(--text-dim);
+}
+
+.slider-value {
+  font: 11px/1 ui-monospace, "Cascadia Mono", monospace;
+  color: var(--text);
+}
+
+input[type="range"] {
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--control-hover);
+  outline: none;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: none;
+  cursor: pointer;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: none;
+  cursor: pointer;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.check input {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* ── Hints + toast ─────────────────────────────────────────────────────── */
+
+.hints {
+  margin: 0;
+  padding-top: 11px;
+  border-top: 1px solid var(--panel-line);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.toast {
+  pointer-events: none;
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 15px;
+  border: 1px solid var(--panel-line);
+  border-radius: 8px;
+  background: var(--panel);
+  backdrop-filter: blur(14px);
+  transition: opacity 0.25s;
+}
