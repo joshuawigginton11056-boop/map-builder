@@ -50,18 +50,13 @@ blue patch you place and becomes something you carve.
 
 The sculpted mountain becomes terrain the game actually loads.
 
-**This is the step with a real open question**, worth settling before it starts:
-Toebeans currently derives its ground height from a route-distance curve
-(`routeHeightAt`), and the trail's shape from per-segment turn angles. A
-sculpted heightfield is a different thing entirely. Either the game learns to
-read a heightfield and the trail gets draped onto it, or the export has to
-reduce a sculpt back down to those curves. The first is more honest and more
-work; the second keeps the game unchanged but throws away most of what you
-sculpted. Decide before building.
+**Blocked on a director's call, not on code.** Toebeans' ground is a corridor
+ribbon swept along the trail, not a terrain field — so there is no direct
+handoff, and the three ways out have very different costs. The options are laid
+out in [DESIGN.md](DESIGN.md#open-questions); the specifics of what the game
+does today are in [TOEBEANS.md](TOEBEANS.md). **Settle this before the session
+starts, not during it.**
 
-## Parked ideas
+---
 
-- Import Toebeans' current mountain to sculpt on, rather than always starting flat.
-- Load `slope-map.png` as a backdrop image to trace the hand-drawn map against.
-- Erosion / noise brushes for natural-looking detail.
-- Adjustable field size and resolution.
+Parked ideas live in [IDEAS.md](IDEAS.md).

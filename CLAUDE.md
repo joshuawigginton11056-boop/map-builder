@@ -16,6 +16,18 @@ This tool replaces that loop with a brush. **Anything built here should stay
 aimed at that**: the point is direct manipulation with instant feedback, not
 a general-purpose 3D editor.
 
+## The documents
+
+Read in this order when picking up work:
+
+| File | What it's for |
+|---|---|
+| [ROADMAP.md](ROADMAP.md) | What's done, what's next. **Start here.** |
+| [DESIGN.md](DESIGN.md) | Why the tool is shaped this way, and the open questions. Read before changing anything that looks arbitrary. |
+| [IDEAS.md](IDEAS.md) | Parking lot. New ideas go here, not into code. |
+| [TOEBEANS.md](TOEBEANS.md) | Context on the game this feeds. Only needed for the export work — and for keeping scale and assets compatible before then. |
+| [README.md](README.md) | How to run it and what the controls are. |
+
 ## Working agreements
 
 - **One feature per session.** The roadmap in [ROADMAP.md](ROADMAP.md) is
